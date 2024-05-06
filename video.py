@@ -22,76 +22,11 @@ from torch.nn import functional as F
 
 from efficient_sam.build_efficient_sam import build_efficient_sam_vitt, build_efficient_sam_vits
 
-def show_anns(anns):
-    if len(anns) == 0:
-        return
-    sorted_anns = sorted(anns, key=(lambda x: x['area']), reverse=True)
-    ax = plt.gca()
-    ax.set_autoscale_on(False)
-
-    img = np.ones((sorted_anns[0]['segmentation'].shape[0], sorted_anns[0]['segmentation'].shape[1], 4))
-    img[:,:,3] = 0
-    for ann in sorted_anns:
-        # if ann['pred_class'] == 1:
-        m = ann['segmentation']
-        color_mask = np.concatenate([np.random.random(3), [0.35]])
-        # img[m] = [0.25526778, 0.19120787, 0.67079563, 0.35]
-        img[m] = color_mask
-    ax.imshow(img)
-
-
-def show_anns_2(anns):
-    if len(anns) == 0:
-        return
-    sorted_anns = sorted(anns, key=(lambda x: x['area']), reverse=True)
-    ax = plt.gca()
-    ax.set_autoscale_on(False)
-
-    img = np.ones((sorted_anns[0]['segmentation'].shape[0], sorted_anns[0]['segmentation'].shape[1], 4))
-    img[:,:,3] = 0
-    for ann in sorted_anns:
-        if ann['pred_class'] >= 0.9:
-            m = ann['segmentation']
-            img[m] = [0.25526778, 0.19120787, 0.67079563, 0.35]
-
-    ax.imshow(img)
-
-
-def preprocess(x):
-    """Normalize pixel values and pad to a square input."""
-    # Normalize colors
-    pixel_mean = torch.Tensor([123.675, 116.28, 103.53]).view(-1, 1, 1)
-    pixel_std = torch.Tensor([58.395, 57.12, 57.375]).view(-1, 1, 1)
-
-    x = x.to(torch.float32).to(pixel_mean.device)
-    
-    if x.shape[2] != 1024 or x.shape[3] != 1024: 
-        x = F.interpolate(
-            x,
-            (1024, 1024),
-            mode="bilinear",
-        )
-    
-    x = (x - pixel_mean) / pixel_std
-    return x
-
-def postprocess_masks(
-    masks: torch.Tensor,
-    input_size: Tuple[int, ...],
-    original_size: Tuple[int, ...],
-) -> torch.Tensor:
-    masks = F.interpolate(
-        masks,
-        (64, 64),
-        mode="bilinear",
-        align_corners=False,
-    )
-    masks = masks[..., : input_size[0], : input_size[1]]
-    masks = F.interpolate(masks, original_size, mode="bilinear", align_corners=False)
-    return masks
-
+from demo import show_anns, show_anns_2, preprocess, postprocess_masks
 
 from common import visualize
+
+from video_utils import open_video_capture, read_video_frame
 
 def main():
     print("Loading model...")
@@ -113,22 +48,18 @@ def main():
     seg_decoder.eval()
     seg_decoder.to(device)
 
-   
-    image_file = 'test_image'
-    image_file = 'camera'
+    video_capture = open_video_capture()
 
-    img_list = sorted(glob.glob(os.path.join(image_file, '*.png')))
-
-    save_path = 'test_output'
-    os.makedirs(save_path, exist_ok=True)
 
     transform = ResizeLongestSide(1024)
 
 
-    for t in img_list:
-        print("Processing image:", t)
-        img_name = os.path.split(t)[1]
-        image = cv2.imread(t)
+    while True:
+        ret, frame = read_video_frame(video_capture)
+        if not ret:
+            print("Can't receive frame (stream end?). Exiting ...")
+            break
+        image = frame
         # print("Image shape:", image.shape)
         rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         ori_size = rgb_image.shape[:2]
@@ -164,9 +95,13 @@ def main():
 
         image = visualize(pred_mask=pred_mask, image=image)
 
-        save_image_path = os.path.join(save_path, img_name)
-        cv2.imwrite(save_image_path, image)
-        print(f"Save to {save_image_path = }")
+        cv2.imshow("frame", image)
+        if cv2.waitKey(1) == ord('q'):
+            break
+
+    # When everything done, release the capture
+    video_capture.release()
+    cv2.destroyAllWindows()
 
 
 
